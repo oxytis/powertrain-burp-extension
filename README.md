@@ -23,13 +23,13 @@ A professional Burp Suite extension that integrates **Oxytis Powertrain CVE inte
 ## 📸 Screenshots
 
 ### Main Interface
-![Main Interface](screenshots/main-interface.png)
+![Main Interface](main-interface.png)
 
 ### CVE Analysis Output
-![CVE Analysis](screenshots/cve-analysis.png)
+![CVE Analysis](cve-analysis.png)
 
 ### Context Menu Integration
-![Context Menu](screenshots/context-menu.png)
+![Context Menu](context-menu.png)
 
 ## 🛠️ Installation
 
