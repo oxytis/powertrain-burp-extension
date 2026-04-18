@@ -42,7 +42,7 @@ A professional Burp Suite extension that integrates **Oxytis Powertrain CVE inte
 
 1. **Download the Extension**
    ```bash
-   git clone https://github.com/yourusername/powertrain-burp-extension.git
+   git clone https://github.com/oxytis/powertrain-burp-extension.git
    cd powertrain-burp-extension
    ```
 
