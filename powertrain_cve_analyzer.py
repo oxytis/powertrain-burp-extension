@@ -142,7 +142,6 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IContextMenuFactory, Acti
         self._cve_input_field = JTextField("CVE-", 20)
         cve_panel.add(self._cve_input_field)
         
- 
         # Analyze button
         self._analyze_button = JButton("Analyze CVE")
         self._analyze_button.addActionListener(self)
@@ -255,8 +254,7 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IContextMenuFactory, Acti
                 api_url = self._api_url_field.getText()
                 api_token = self._api_token_field.getText()
                 cve_id = self._cve_input_field.getText().strip()
-                format_type = "json"
-
+                format_type = "json" 
                 
                 # Debug output
                 print("[DEBUG] API URL: " + api_url)
@@ -569,18 +567,39 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IContextMenuFactory, Acti
         """Extract selected text from request/response"""
         try:
             bounds = invocation.getSelectionBounds()
-            if bounds:
-                if invocation.getInvocationContext() == invocation.CONTEXT_MESSAGE_EDITOR_REQUEST:
-                    message = invocation.getSelectedMessages()[0].getRequest()
-                else:
-                    message = invocation.getSelectedMessages()[0].getResponse()
+            if not bounds:
+                return None
                 
+            context = invocation.getInvocationContext()
+            
+            # Handle different context types
+            if context in [invocation.CONTEXT_MESSAGE_EDITOR_REQUEST, 
+                          invocation.CONTEXT_MESSAGE_VIEWER_REQUEST]:
+                message = invocation.getSelectedMessages()[0].getRequest()
+            elif context in [invocation.CONTEXT_MESSAGE_EDITOR_RESPONSE,
+                            invocation.CONTEXT_MESSAGE_VIEWER_RESPONSE]:
+                message = invocation.getSelectedMessages()[0].getResponse()
+            else:
+                # For other contexts (proxy history, site map, etc.)
+                # Try to get from either request or response
+                selected_messages = invocation.getSelectedMessages()
+                if selected_messages and len(selected_messages) > 0:
+                    # Try response first, then request
+                    message = selected_messages[0].getResponse()
+                    if not message:
+                        message = selected_messages[0].getRequest()
+                else:
+                    return None
+            
+            if message:
                 selected_text = self._helpers.bytesToString(message)[bounds[0]:bounds[1]]
                 return selected_text.strip()
-        except:
-            pass
+                
+        except Exception as e:
+            print("[-] Error getting selected text: " + str(e))
+            
         return None
-    
+        
     def _is_cve_format(self, text):
         """Check if text matches CVE format"""
         import re
