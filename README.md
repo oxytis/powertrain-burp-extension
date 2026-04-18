@@ -69,7 +69,7 @@ A professional Burp Suite extension that integrates **Oxytis Powertrain CVE inte
 ### API Settings
 - **API URL**: `https://oxytis.com/api/cve/analyze` (default)
 - **Token**: Your provided API key
-- **Format**: JSON or PDF output
+- **Format**: JSON output
 
 ## 🎯 Usage
 
