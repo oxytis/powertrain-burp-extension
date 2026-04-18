@@ -12,7 +12,7 @@ This guide will walk you through installing the Powertrain CVE Analyzer extensio
 ## Step 1: Download the Extension
 
 ### Option A: Download from GitHub Releases
-1. Go to the [Releases page](https://github.com/yourusername/powertrain-burp-extension/releases)
+1. Go to the [Releases page](https://github.com/oxytis/powertrain-burp-extension/releases)
 2. Download the latest `powertrain_cve_analyzer.py` file
 
 ### Option B: Clone the Repository
