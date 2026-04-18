@@ -255,6 +255,7 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IContextMenuFactory, Acti
                 api_url = self._api_url_field.getText()
                 api_token = self._api_token_field.getText()
                 cve_id = self._cve_input_field.getText().strip()
+                format_type = "json"
 
                 
                 # Debug output
