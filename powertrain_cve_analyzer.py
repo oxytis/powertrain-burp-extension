@@ -10,6 +10,7 @@ from burp import IBurpExtender, ITab, IHttpListener, IContextMenuFactory
 from javax.swing import (JPanel, JLabel, JTextField, JButton, JTextArea, 
                         JScrollPane, BoxLayout, JMenuItem, JOptionPane,
                         BorderFactory, SwingConstants, JComboBox)
+from javax.swing.event import DocumentListener
 from java.awt import BorderLayout, FlowLayout, Dimension, Color, Font
 from java.awt.event import ActionListener
 from javax.swing.border import EmptyBorder
@@ -21,12 +22,15 @@ import threading
 class BurpExtender(IBurpExtender, ITab, IHttpListener, IContextMenuFactory, ActionListener):
     
     def registerExtenderCallbacks(self, callbacks):
-        """Initialize the extension"""
+        """Initialize the extension with persistent settings"""
         self._callbacks = callbacks
         self._helpers = callbacks.getHelpers()
         
         # Set extension name
         callbacks.setExtensionName("Powertrain CVE Analyzer")
+        
+        # Load saved settings
+        self._load_settings()
         
         # Initialize UI
         self._init_ui()
@@ -40,6 +44,38 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IContextMenuFactory, Acti
         
         print("[+] Powertrain CVE Analyzer loaded successfully")
         print("[+] Configure API settings in the Powertrain CVE tab")
+    
+    def _load_settings(self):
+        """Load saved settings from Burp's extension settings"""
+        try:
+            # Load API URL
+            saved_url = self._callbacks.loadExtensionSetting("api_url")
+            self._saved_api_url = saved_url if saved_url else "https://oxytis.com/api/cve/analyze"
+            
+            # Load API Token
+            saved_token = self._callbacks.loadExtensionSetting("api_token")
+            self._saved_api_token = saved_token if saved_token else ""
+            
+            print("[+] Settings loaded from Burp configuration")
+        except Exception as e:
+            print("[-] Error loading settings: " + str(e))
+            self._saved_api_url = "https://oxytis.com/api/cve/analyze"
+            self._saved_api_token = ""
+    
+    def _save_settings(self):
+        """Save current settings to Burp's extension settings"""
+        try:
+            # Save API URL
+            api_url = self._api_url_field.getText()
+            self._callbacks.saveExtensionSetting("api_url", api_url)
+            
+            # Save API Token
+            api_token = self._api_token_field.getText()
+            self._callbacks.saveExtensionSetting("api_token", api_token)
+            
+            print("[+] Settings saved to Burp configuration")
+        except Exception as e:
+            print("[-] Error saving settings: " + str(e))
     
     def _init_ui(self):
         """Initialize the user interface"""
@@ -70,7 +106,7 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IContextMenuFactory, Acti
         return header_panel
     
     def _create_config_panel(self):
-        """Create the configuration panel"""
+        """Create the configuration panel with persistent settings"""
         config_panel = JPanel()
         config_panel.setLayout(BoxLayout(config_panel, BoxLayout.Y_AXIS))
         config_panel.setBorder(BorderFactory.createTitledBorder("API Configuration"))
@@ -78,16 +114,27 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IContextMenuFactory, Acti
         # API URL
         url_panel = JPanel(FlowLayout(FlowLayout.LEFT))
         url_panel.add(JLabel("API URL:"))
-        self._api_url_field = JTextField("https://oxytis.com/api/cve/analyze", 30)
+        self._api_url_field = JTextField(self._saved_api_url, 30)
+        # Add change listener to auto-save
+        self._api_url_field.getDocument().addDocumentListener(SettingsChangeListener(self))
         url_panel.add(self._api_url_field)
         config_panel.add(url_panel)
         
         # API Token
         token_panel = JPanel(FlowLayout(FlowLayout.LEFT))
         token_panel.add(JLabel("API Token:"))
-        self._api_token_field = JTextField(30)
+        self._api_token_field = JTextField(self._saved_api_token, 30)
+        # Add change listener to auto-save
+        self._api_token_field.getDocument().addDocumentListener(SettingsChangeListener(self))
         token_panel.add(self._api_token_field)
         config_panel.add(token_panel)
+        
+        # Settings info
+        info_panel = JPanel(FlowLayout(FlowLayout.LEFT))
+        info_label = JLabel("Settings are automatically saved and will persist across Burp restarts")
+        info_label.setFont(Font("Arial", Font.ITALIC, 10))
+        info_panel.add(info_label)
+        config_panel.add(info_panel)
         
         # CVE Input
         cve_panel = JPanel(FlowLayout(FlowLayout.LEFT))
@@ -112,6 +159,12 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IContextMenuFactory, Acti
         self._test_button = JButton("Test API Connection")
         self._test_button.addActionListener(self)
         test_panel.add(self._test_button)
+        
+        # Clear settings button
+        clear_button = JButton("Clear Saved Settings")
+        clear_button.addActionListener(self)
+        test_panel.add(clear_button)
+        
         config_panel.add(test_panel)
         
         return config_panel
@@ -138,7 +191,7 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IContextMenuFactory, Acti
         return results_panel
     
     def actionPerformed(self, event):
-        """Handle button clicks"""
+        """Handle button clicks with settings management"""
         command = event.getActionCommand()
         
         if command == "Test API Connection":
@@ -147,6 +200,26 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IContextMenuFactory, Acti
             self._analyze_cve()
         elif command == "Clear Results":
             self._results_area.setText("")
+        elif command == "Clear Saved Settings":
+            self._clear_settings()
+    
+    def _clear_settings(self):
+        """Clear all saved settings"""
+        try:
+            self._callbacks.saveExtensionSetting("api_url", None)
+            self._callbacks.saveExtensionSetting("api_token", None)
+            
+            # Reset form fields
+            self._api_url_field.setText("https://oxytis.com/api/cve/analyze")
+            self._api_token_field.setText("")
+            
+            self._results_area.append("[+] Settings cleared successfully\n")
+            JOptionPane.showMessageDialog(self._main_panel, 
+                "Settings cleared successfully!", 
+                "Settings Cleared", 
+                JOptionPane.INFORMATION_MESSAGE)
+        except Exception as e:
+            self._results_area.append("[-] Error clearing settings: " + str(e) + "\n")
     
     def _test_api_connection(self):
         """Test the API connection"""
@@ -188,6 +261,11 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IContextMenuFactory, Acti
                 cve_id = self._cve_input_field.getText().strip()
                 format_type = str(self._format_combo.getSelectedItem())
                 
+                # Debug output
+                print("[DEBUG] API URL: " + api_url)
+                print("[DEBUG] API Token length: " + str(len(api_token)))
+                print("[DEBUG] CVE ID: " + cve_id)
+                
                 if not api_token:
                     JOptionPane.showMessageDialog(self._main_panel, 
                         "Please enter an API token", 
@@ -210,6 +288,7 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IContextMenuFactory, Acti
                 }
                 
                 json_data = json.dumps(data)
+                print("[DEBUG] Request data: " + json_data[:100] + "...")  # First 100 chars
                 
                 request = urllib2.Request(api_url)
                 request.add_header('Content-Type', 'application/json')
@@ -223,6 +302,21 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IContextMenuFactory, Acti
                 # Parse and display results
                 self._display_cve_results(cve_id, result)
                 
+            except urllib2.HTTPError as e:
+                error_msg = "HTTP Error " + str(e.code) + ": " + str(e.reason)
+                if e.code == 401:
+                    error_msg += "\n\nThis is usually caused by:\n"
+                    error_msg += "- Invalid API token\n"
+                    error_msg += "- Token copied with extra spaces\n"
+                    error_msg += "- Expired or revoked token\n"
+                    error_msg += "\nPlease verify your API token is correct."
+                
+                self._results_area.append("[-] " + error_msg + "\n\n")
+                JOptionPane.showMessageDialog(self._main_panel, 
+                    error_msg, 
+                    "API Error", 
+                    JOptionPane.ERROR_MESSAGE)
+                    
             except Exception as e:
                 error_msg = "CVE analysis failed: " + str(e)
                 self._results_area.append("[-] " + error_msg + "\n\n")
@@ -523,3 +617,17 @@ class CVEMenuActionListener(ActionListener):
     
     def actionPerformed(self, event):
         self.extender.analyze_cve_from_context(self.cve_id)
+
+# Document change listener for auto-saving settings
+class SettingsChangeListener(DocumentListener):
+    def __init__(self, extender):
+        self.extender = extender
+    
+    def insertUpdate(self, e):
+        self.extender._save_settings()
+    
+    def removeUpdate(self, e):
+        self.extender._save_settings()
+    
+    def changedUpdate(self, e):
+        self.extender._save_settings()
