@@ -142,11 +142,7 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IContextMenuFactory, Acti
         self._cve_input_field = JTextField("CVE-", 20)
         cve_panel.add(self._cve_input_field)
         
-        # Format selection
-        cve_panel.add(JLabel("Format:"))
-        self._format_combo = JComboBox(["json", "pdf"])
-        cve_panel.add(self._format_combo)
-        
+ 
         # Analyze button
         self._analyze_button = JButton("Analyze CVE")
         self._analyze_button.addActionListener(self)
@@ -259,7 +255,7 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IContextMenuFactory, Acti
                 api_url = self._api_url_field.getText()
                 api_token = self._api_token_field.getText()
                 cve_id = self._cve_input_field.getText().strip()
-                format_type = str(self._format_combo.getSelectedItem())
+
                 
                 # Debug output
                 print("[DEBUG] API URL: " + api_url)
