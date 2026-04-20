@@ -246,7 +246,22 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IContextMenuFactory, Acti
         thread = threading.Thread(target=test_connection)
         thread.daemon = True
         thread.start()
-    
+    def _severity_from_score(self, score):
+        try:
+            score = float(score)
+        except:
+            return "Unknown"
+
+        if score == 0.0:
+            return "None"
+        elif score <= 3.9:
+            return "Low"
+        elif score <= 6.9:
+            return "Medium"
+        elif score <= 8.9:
+            return "High"
+        else:
+            return "Critical"
     def _analyze_cve(self):
         """Analyze a CVE using the Powertrain API"""
         def analyze():
@@ -385,7 +400,9 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IContextMenuFactory, Acti
                 # Risk Scoring Section
                 self._results_area.append(">>> RISK ASSESSMENT <<<\n") 
                 self._results_area.append("-" * 25 + "\n")
-                self._results_area.append("  CVSS Score:        " + str(cve_data.get("cvss_score", "N/A")) + " (Critical)\n")
+                cvss_score = cve_data.get("cvss_score", "N/A")
+                severity = self._severity_from_score(cvss_score)
+                self._results_area.append("  CVSS Score:        " + str(cvss_score) + " (" + severity + ")\n")
                 self._results_area.append("  CVSS Vector:       " + cvss_vector + "\n")
                 self._results_area.append("  Oxytis Risk Score: " + str(cve_data.get("oxytis_risk_score", "N/A")) + "\n")
                 self._results_area.append("  Residual Risk:     " + str(cve_data.get("residual_risk_score", "N/A")) + "\n")
