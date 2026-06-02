@@ -406,6 +406,16 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IContextMenuFactory, Acti
                 self._results_area.append("  CVSS Vector:       " + cvss_vector + "\n")
                 self._results_area.append("  Oxytis Risk Score: " + str(cve_data.get("oxytis_risk_score", "N/A")) + "\n")
                 self._results_area.append("  Residual Risk:     " + str(cve_data.get("residual_risk_score", "N/A")) + "\n")
+                epss = cve_data.get("epss")
+                percentile = cve_data.get("percentile")
+                if epss is not None:
+                    line = "  EPSS (30-day):     " + str(round(epss * 100, 2)) + "%"
+                    if percentile is not None:
+                        line += "  (percentile " + str(round(percentile * 100, 1)) + ")"
+                    self._results_area.append(line + "\n")
+                controls = cve_data.get("applied_controls")
+                if controls:
+                    self._results_area.append("  Controls Credited: " + ", ".join(controls) + "\n")
                 self._results_area.append("  OWASP Category:    " + label + "\n\n")
                 
                 # Technical Analysis Section
@@ -446,6 +456,19 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IContextMenuFactory, Acti
                 self._results_area.append("-" * 36 + "\n")
                 wrapped_rec = self._wrap_text(recommendation, 76)
                 self._results_area.append(self._indent_text(wrapped_rec, 2) + "\n\n")
+                
+                # Residual Risk Explanation Section
+                explanation = self._clean_text(cve_data.get("residual_risk_explanation", ""))
+                if explanation and explanation != "N/A":
+                    self._results_area.append(">>> RESIDUAL RISK EXPLANATION <<<\n")
+                    self._results_area.append("-" * 33 + "\n")
+                    for para in explanation.split("\n\n"):
+                        para = para.strip()
+                        if para:
+                            wrapped = self._wrap_text(para, 76)
+                            self._results_area.append(self._indent_text(wrapped, 2) + "\n\n")
+                
+
                 
                 # Additional Notes Section
                 if notes and notes != "":
