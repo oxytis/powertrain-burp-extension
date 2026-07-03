@@ -208,7 +208,7 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IContextMenuFactory, Acti
     def _create_results_panel(self):
         """Create the results display panel"""
         results_panel = JPanel(BorderLayout())
-        results_panel.setBorder(BorderFactory.createTitledBorder("CVE Analysis Results"))
+        results_panel.setBorder(BorderFactory.createTitledBorder("Analysis Results"))
         
         self._results_area = JTextArea(20, 80)
         self._results_area.setEditable(False)
