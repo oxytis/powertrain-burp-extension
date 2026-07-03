@@ -1,4 +1,4 @@
-# Powertrain Powertrain Analyzer for Burp Suite
+# Powertrain Analyzer for Burp Suite
 
 <p align="center">
   <img src="https://img.shields.io/badge/Burp%20Suite-Extension-orange" alt="Burp Suite Extension">
@@ -7,16 +7,18 @@
   <img src="https://img.shields.io/badge/Status-Active-brightgreen" alt="Active">
 </p>
 
-A professional Burp Suite extension that integrates **Oxytis Powertrain CVE intelligence** directly into your security testing workflow. Get comprehensive vulnerability analysis, risk scoring, and actionable remediation guidance without leaving Burp Suite.
+A professional Burp Suite extension that integrates **Oxytis Powertrain vulnerability intelligence** directly into your security testing workflow. Analyze published CVEs *and* assess scan findings that have no CVE, with risk scoring and actionable remediation guidance — without leaving Burp Suite.
 
 ## 🚀 Features
 
 - **🔍 Real-time CVE Analysis** - Instant access to detailed vulnerability intelligence
-- **📊 Advanced Risk Scoring** - CVSS scores with Oxytis risk assessment
+- **🧪 No-CVE Finding Assessment** - Right-click any Burp Scanner issue to get an estimated CVSS v4.0 score for findings that have no published CVE
+- **📊 Accurate CVSS v4.0 Scoring** - Vectors scored deterministically via FIRST's official `cvss` library (real MacroVector lookup, not an approximation), covering subsequent-system impact (SC/SI/SA)
+- **📈 EPSS Enrichment** - Exploit Prediction Scoring System data surfaced alongside CVSS in CVE analysis
 - **🧠 SOO Model Analysis** - Patent-pending Subject-Object-Opportunity framework
 - **🛡️ HEXAD Security Primitives** - Comprehensive impact analysis across six security domains
 - **📋 OWASP Top 10 Mapping** - Automatic categorization to current OWASP standards
-- **🖱️ Context Menu Integration** - Right-click CVE IDs anywhere in Burp to analyze
+- **🖱️ Context Menu Integration** - Right-click CVE IDs *or* Scanner issues anywhere in Burp to analyze
 - **📄 Professional Reports** - Clean, formatted output perfect for security assessments
 - **⚡ Background Processing** - Non-blocking API calls keep Burp responsive
 
@@ -51,7 +53,7 @@ A professional Burp Suite extension that integrates **Oxytis Powertrain CVE inte
    - Navigate to **Extender** → **Extensions**
    - Click **Add**
    - Select **Python** as the extension type
-   - Choose `powertrain_cve_analyzer.py`
+   - Choose `powertrain_burp_extension.py`
    - Click **Next** to load
 
 3. **Configure API Access**
@@ -67,7 +69,8 @@ A professional Burp Suite extension that integrates **Oxytis Powertrain CVE inte
 3. Enter the token in the extension configuration
 
 ### API Settings
-- **API URL**: `https://oxytis.com/api/cve/analyze` (default)
+- **CVE Endpoint**: `https://oxytis.com/api/cve/analyze` (default)
+- **Finding Endpoint**: `https://oxytis.com/api/finding/analyze` (no-CVE assessment)
 - **Token**: Your provided API key
 - **Format**: JSON output
 
@@ -85,20 +88,39 @@ A professional Burp Suite extension that integrates **Oxytis Powertrain CVE inte
 2. Right-click and choose **Analyze with Powertrain**
 3. Analysis runs automatically in the CVE tab
 
-### Method 3: Security Testing Workflow
+### Method 3: No-CVE Finding Assessment
+For vulnerabilities discovered by Burp Scanner that have no published CVE:
+1. In the **Scanner** (or issue view), right-click a finding
+2. Choose **Assess with Powertrain**
+3. The extension extracts the issue name, detail, and evidence, maps the issue name to a CWE, and submits it for assessment
+4. Use the **exposure** and **controls** dropdowns to reflect environmental context; the risk view updates accordingly
+5. Review the estimated CVSS v4.0 vector and score — clearly marked as an estimate (no published CVE)
+
+> Multi-instance issues are deduplicated to a single context-menu entry per issue name, so a finding that fired dozens of times doesn't clutter the menu.
+
+### Method 4: Security Testing Workflow
 - **Discovery Phase**: Analyze CVEs found in version banners
 - **Exploitation Phase**: Research vulnerability details before testing
-- **Reporting Phase**: Include detailed CVE intelligence in findings
+- **Assessment Phase**: Score no-CVE Scanner findings to prioritize alongside CVE-backed issues
+- **Reporting Phase**: Include detailed CVE intelligence and finding assessments in findings
 
 ## 📊 Analysis Output
 
 The extension provides comprehensive vulnerability intelligence:
 
-### Risk Assessment
-- **CVSS Score & Vector**: Industry-standard vulnerability scoring
+### Risk Assessment (CVE Analysis)
+- **CVSS Score & Vector**: Industry-standard vulnerability scoring, computed via FIRST's `cvss` library
+- **EPSS**: Exploit Prediction Scoring System likelihood, where available
 - **Oxytis Risk Score**: Enhanced risk assessment with contextual factors
 - **Residual Risk**: Post-mitigation risk estimation
 - **OWASP Category**: Automatic mapping to OWASP Top 10 2025
+
+### Finding Assessment (No CVE)
+- **Estimated CVSS v4.0 Vector**: The model judges the vector from the request/response evidence; the numeric score is then computed **deterministically** by FIRST's `cvss` library rather than guessed by the model
+- **Estimate Labeling**: Results are explicitly labeled as an estimate for a finding with no published CVE (and carry no EPSS, which only applies to real CVEs)
+- **CWE Context**: The Burp issue name is mapped to a CWE and sent as context for the assessment
+- **OWASP Category**: Derived from the model's analysis of the finding
+- **Exposure & Controls Modifiers**: Adjustable dropdowns to reflect real environmental exposure and compensating controls
 
 ### Technical Analysis
 - **SOO Model Breakdown**: Subject-Object-Opportunity analysis (Patent Pending)
@@ -119,16 +141,18 @@ The extension provides comprehensive vulnerability intelligence:
 1. Discover services with version banners
 2. Right-click CVE references in Burp
 3. Get instant vulnerability intelligence
-4. Prioritize testing based on risk scores
-5. Include detailed analysis in reports
+4. Right-click no-CVE Scanner findings to get estimated CVSS v4.0 scores
+5. Prioritize testing based on risk scores
+6. Include detailed analysis in reports
 ```
 
 ### Vulnerability Assessment
 ```
 1. Import scanner results into Burp
 2. Analyze CVEs with contextual intelligence
-3. Use Oxytis risk scores for prioritization
-4. Generate detailed client communications
+3. Assess no-CVE findings to bring them onto the same scoring scale
+4. Use Oxytis risk scores for prioritization
+5. Generate detailed client communications
 ```
 
 ## 🤝 Contributing
@@ -148,7 +172,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 🏢 About Oxytis
 
-[Oxytis](https://oxytis.com) provides advanced cybersecurity intelligence and forensic analysis services. The Powertrain CVE analysis system delivers enterprise-grade vulnerability intelligence with patent-pending methodologies.
+[Oxytis](https://oxytis.com) provides advanced cybersecurity intelligence and forensic analysis services. The Powertrain analysis system delivers enterprise-grade vulnerability intelligence with patent-pending methodologies.
 
 ## 📞 Support
 
@@ -157,6 +181,15 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - **API Support**: Contact Oxytis for API access and support
 
 ## 🔄 Changelog
+
+### v1.1.0 (2026-07-02)
+- **Added no-CVE finding assessment mode** — right-click any Burp Scanner issue to get an estimated CVSS v4.0 score for findings without a published CVE, via the new `/api/finding/analyze` endpoint
+- Model-derived CVSS v4.0 vectors are now scored **deterministically** with FIRST's official `cvss` library, replacing a hand-rolled approximation that ignored subsequent-system impact (SC/SI/SA) and could produce significantly wrong scores — this also fixes scoring on the CVE path
+- Finding results are explicitly labeled as estimates (no published CVE, no EPSS)
+- Burp issue name → CWE mapping provides classification context for finding assessments
+- Exposure and controls dropdowns let you tune assessments to environmental context
+- Context menu deduplicates multi-instance issues to one entry per issue name
+- Added EPSS enrichment to CVE analysis output
 
 ### v1.0.0 (2026-04-18)
 - Initial release
@@ -169,7 +202,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ---
 
 <p align="center">
-  <strong>Transform your security testing workflow with professional CVE intelligence.</strong>
+  <strong>Transform your security testing workflow with professional vulnerability intelligence.</strong>
 </p>
 
 <p align="center">
