@@ -2,8 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
-Powertrain CVE Analysis Extension for Burp Suite
-Integrates Oxytis Powertrain CVE intelligence directly into Burp Suite
+Oxytis Powertrain Extension for Burp Suite
+Integrates Oxytis Powertrain vulnerability intelligence into Burp Suite:
+CVE lookup and AI-assisted assessment of Scanner findings without a CVE.
 """
 
 from burp import IBurpExtender, ITab, IHttpListener, IContextMenuFactory
@@ -18,6 +19,36 @@ from java.util import Date
 import json
 import urllib2
 import threading
+import re
+
+# Burp Scanner issue name -> CWE (first substring match wins; None -> let the model infer)
+_ISSUE_CWE = [
+    ("cross-site scripting",            "CWE-79"),
+    ("sql injection",                   "CWE-89"),
+    ("os command injection",            "CWE-78"),
+    ("command injection",               "CWE-78"),
+    ("cross-site request forgery",      "CWE-352"),
+    ("csrf",                            "CWE-352"),
+    ("server-side request forgery",     "CWE-918"),
+    ("ssrf",                            "CWE-918"),
+    ("path traversal",                  "CWE-22"),
+    ("directory traversal",             "CWE-22"),
+    ("xml external entity",             "CWE-611"),
+    ("xxe",                             "CWE-611"),
+    ("server-side template injection",  "CWE-1336"),
+    ("template injection",              "CWE-1336"),
+    ("open redirect",                   "CWE-601"),
+    ("ldap injection",                  "CWE-90"),
+    ("xpath injection",                 "CWE-643"),
+    ("response header injection",       "CWE-113"),
+    ("header injection",                "CWE-113"),
+    ("cleartext",                       "CWE-319"),
+    ("deserialization",                 "CWE-502"),
+    ("clickjacking",                    "CWE-1021"),
+    ("cross-origin resource sharing",   "CWE-942"),
+    ("session token in url",            "CWE-598"),
+    ("xml injection",                   "CWE-91"),
+]
 
 class BurpExtender(IBurpExtender, ITab, IHttpListener, IContextMenuFactory, ActionListener):
     
@@ -27,7 +58,7 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IContextMenuFactory, Acti
         self._helpers = callbacks.getHelpers()
         
         # Set extension name
-        callbacks.setExtensionName("Powertrain CVE Analyzer")
+        callbacks.setExtensionName("Oxytis Powertrain")
         
         # Load saved settings
         self._load_settings()
@@ -42,8 +73,8 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IContextMenuFactory, Acti
         # Add custom tab
         callbacks.addSuiteTab(self)
         
-        print("[+] Powertrain CVE Analyzer loaded successfully")
-        print("[+] Configure API settings in the Powertrain CVE tab")
+        print("[+] Oxytis Powertrain loaded successfully")
+        print("[+] Configure API settings in the Powertrain tab")
     
     def _load_settings(self):
         """Load saved settings from Burp's extension settings"""
@@ -97,9 +128,9 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IContextMenuFactory, Acti
     def _create_header_panel(self):
         """Create the header panel"""
         header_panel = JPanel(FlowLayout(FlowLayout.LEFT))
-        header_panel.setBorder(BorderFactory.createTitledBorder("Powertrain CVE Intelligence"))
+        header_panel.setBorder(BorderFactory.createTitledBorder("Oxytis Powertrain"))
         
-        title_label = JLabel("Oxytis Powertrain CVE Analyzer")
+        title_label = JLabel("Oxytis Powertrain")
         title_label.setFont(Font("Arial", Font.BOLD, 16))
         header_panel.add(title_label)
         
@@ -148,6 +179,16 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IContextMenuFactory, Acti
         cve_panel.add(self._analyze_button)
         
         config_panel.add(cve_panel)
+        
+        # Finding assessment options (used by right-click "Assess with Tally")
+        finding_panel = JPanel(FlowLayout(FlowLayout.LEFT))
+        finding_panel.add(JLabel("Finding exposure:"))
+        self._exposure_combo = JComboBox(["External", "Internal", "Unknown"])
+        finding_panel.add(self._exposure_combo)
+        finding_panel.add(JLabel("   Controls:"))
+        self._controls_combo = JComboBox(["Partial", "Ineffective", "Effective"])
+        finding_panel.add(self._controls_combo)
+        config_panel.add(finding_panel)
         
         # Test connection button
         test_panel = JPanel(FlowLayout(FlowLayout.LEFT))
@@ -505,7 +546,8 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IContextMenuFactory, Acti
             self._results_area.append("  " + "-" * 34 + "\n")
             
             # Find where HEXAD content ends
-            end_markers = ["The CVSS", "OWASP", "Oxytis Risk Score"]
+            end_markers = ["The CVSS", "The vulnerable", "The Oxytis",
+                           "OWASP", "Oxytis Risk Score", "Oxytis Risk"]
             hexad_end = len(hexad_content)
             
             for marker in end_markers:
@@ -534,8 +576,9 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IContextMenuFactory, Acti
                                     next_idx = next_pos
                         
                         element_desc = pure_hexad[start_idx:next_idx].strip()
-                        element_desc = element_desc.replace("**", "").replace("- ", "").replace(" -", "")
+                        element_desc = element_desc.replace("**", "")
                         element_desc = " ".join(element_desc.split())
+                        element_desc = element_desc.lstrip("-*\u2022 ").rstrip(" -*\u2022")
                         
                         if ":" in element_desc and len(element_desc) > len(element) + 10:
                             self._results_area.append("    * " + element_desc + "\n")
@@ -548,10 +591,13 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IContextMenuFactory, Acti
             
             self._results_area.append("\n")
             
-            # Display post-HEXAD content
+            # Display post-HEXAD content, but drop a redundant CVSS-vector restatement
             if post_hexad:
-                wrapped_post = self._wrap_text(post_hexad, 76)
-                self._results_area.append(self._indent_text(wrapped_post, 2) + "\n\n")
+                low = post_hexad.lower()
+                if not (low.startswith("the cvss") or low.startswith("the vulnerable")
+                        or low.startswith("the oxytis")):
+                    wrapped_post = self._wrap_text(post_hexad, 76)
+                    self._results_area.append(self._indent_text(wrapped_post, 2) + "\n\n")
                 
         except:
             # If HEXAD formatting fails completely, just display as normal text
@@ -589,18 +635,208 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IContextMenuFactory, Acti
         
         return "\n".join(lines)
     
+    # ------------------------------------------------------------------
+    # Finding (no-CVE) assessment -> /api/finding/analyze
+    # ------------------------------------------------------------------
+    def _cwe_for_issue(self, name):
+        """Map a Burp Scanner issue name to a CWE, or None to let the model infer."""
+        if not name:
+            return None
+        n = name.lower()
+        for needle, cwe in _ISSUE_CWE:
+            if needle in n:
+                return cwe
+        return None
+
+    def _strip_html(self, html):
+        """Crude HTML -> text for issue detail/background (model input only)."""
+        if not html:
+            return ""
+        text = re.sub(r"<[^>]+>", " ", html)
+        for a, b in [("&amp;", "&"), ("&lt;", "<"), ("&gt;", ">"),
+                     ("&quot;", '"'), ("&#39;", "'"), ("&nbsp;", " ")]:
+            text = text.replace(a, b)
+        text = re.sub(r"[ \t]+", " ", text)
+        text = re.sub(r"\n\s*\n\s*\n+", "\n\n", text)
+        return text.strip()
+
+    def _issue_evidence(self, issue):
+        """First request/response pair as text (truncated) to ground the model."""
+        try:
+            msgs = issue.getHttpMessages()
+            if not msgs or len(msgs) == 0:
+                return "(no request/response captured)"
+            m = msgs[0]
+            parts = []
+            req = m.getRequest()
+            if req:
+                parts.append("=== REQUEST ===\n" + self._helpers.bytesToString(req)[:2000])
+            resp = m.getResponse()
+            if resp:
+                parts.append("=== RESPONSE ===\n" + self._helpers.bytesToString(resp)[:2000])
+            return "\n\n".join(parts) if parts else "(no request/response captured)"
+        except Exception as e:
+            print("[-] Error extracting evidence: " + str(e))
+            return "(evidence extraction failed)"
+
+    def _analyze_finding(self, issue):
+        """Assess a Burp scan issue (no CVE) via the Powertrain finding endpoint."""
+        def analyze():
+            try:
+                api_url = self._api_url_field.getText()
+                api_token = self._api_token_field.getText()
+                finding_url = api_url.replace("/cve/", "/finding/")
+
+                if not api_token:
+                    JOptionPane.showMessageDialog(self._main_panel,
+                        "Please enter an API token", "Missing Token",
+                        JOptionPane.WARNING_MESSAGE)
+                    return
+
+                name = issue.getIssueName()
+                cwe = self._cwe_for_issue(name)
+                detail = self._strip_html(issue.getIssueDetail() or "")
+                background = self._strip_html(issue.getIssueBackground() or "")
+                if background:
+                    detail = (detail + "\n\n" + background).strip()
+                evidence = self._issue_evidence(issue)
+
+                data = {
+                    "token": api_token,
+                    "name": name,
+                    "cwe": cwe,
+                    "detail": detail,
+                    "evidence": evidence,
+                    "exposure": str(self._exposure_combo.getSelectedItem()).lower(),
+                    "controls": str(self._controls_combo.getSelectedItem()).lower(),
+                }
+                json_data = json.dumps(data)
+
+                request = urllib2.Request(finding_url)
+                request.add_header("Content-Type", "application/json")
+                request.get_method = lambda: "POST"
+
+                self._results_area.append("[*] Assessing finding: " + name +
+                                          (" (" + cwe + ")" if cwe else "") + " ...\n")
+                response = urllib2.urlopen(request, json_data, timeout=60)
+                result = response.read()
+                self._display_finding_results(name, result)
+
+            except urllib2.HTTPError as e:
+                error_msg = "HTTP Error " + str(e.code) + ": " + str(e.reason)
+                self._results_area.append("[-] " + error_msg + "\n\n")
+                JOptionPane.showMessageDialog(self._main_panel, error_msg,
+                    "API Error", JOptionPane.ERROR_MESSAGE)
+            except Exception as e:
+                error_msg = "Finding assessment failed: " + str(e)
+                self._results_area.append("[-] " + error_msg + "\n\n")
+                JOptionPane.showMessageDialog(self._main_panel, error_msg,
+                    "Analysis Error", JOptionPane.ERROR_MESSAGE)
+
+        thread = threading.Thread(target=analyze)
+        thread.daemon = True
+        thread.start()
+
+    def _display_finding_results(self, issue_name, json_result):
+        """Render an estimated finding assessment, reusing the CVE formatters."""
+        try:
+            data = json.loads(json_result)
+            if data.get("status") != "success":
+                self._results_area.append("[-] Assessment failed: " +
+                    str(data.get("error", "Unknown error")) + "\n\n")
+                return
+            fd = data.get("data", {})
+
+            title = self._clean_text(fd.get("title", issue_name))
+            cvss_vector = self._clean_text(fd.get("cvss_vector", "N/A"))
+            label = self._clean_text(fd.get("label", "N/A"))
+            description = self._clean_text(fd.get("description", "No description available"))
+            recommendation = self._clean_text(fd.get("recommendation", "No recommendations available"))
+            notes = self._clean_text(fd.get("notes", ""))
+            cvss_score = fd.get("cvss_score")
+            severity = self._clean_text(fd.get("cvss_severity") or self._severity_from_score(cvss_score))
+
+            self._results_area.append("\n" + "=" * 80 + "\n")
+            self._results_area.append("    POWERTRAIN FINDING ASSESSMENT (ESTIMATED): " + issue_name + "\n")
+            self._results_area.append("=" * 80 + "\n\n")
+
+            self._results_area.append(">>> KEY INFORMATION <<<\n")
+            self._results_area.append("-" * 25 + "\n")
+            self._results_area.append("  Title: " + title + "\n")
+            self._results_area.append("  NOTE:  No published CVE - CVSS is a Tally estimate from the finding evidence.\n\n")
+
+            self._results_area.append(">>> RISK ASSESSMENT <<<\n")
+            self._results_area.append("-" * 25 + "\n")
+            if cvss_score is None:
+                self._results_area.append("  CVSS (est. v4.0):  N/A (could not derive a vector)\n")
+            else:
+                self._results_area.append("  CVSS (est. v4.0):  " + str(cvss_score) + " (" + severity + ")\n")
+            self._results_area.append("  CVSS Vector:       " + cvss_vector + "\n")
+            self._results_area.append("  Oxytis Risk Score: " + str(fd.get("oxytis_risk_score", "N/A")) + "\n")
+            self._results_area.append("  OWASP Category:    " + label + "\n\n")
+
+            self._results_area.append(">>> TECHNICAL ANALYSIS <<<\n")
+            self._results_area.append("-" * 28 + "\n")
+            if "HEXAD" in description:
+                try:
+                    parts = description.split("HEXAD")
+                    if len(parts) > 1:
+                        pre = parts[0].strip()
+                        pre = re.sub(r"\s*(?:in terms of\s+)?the\s*$", "", pre, flags=re.I).strip()
+                        if pre:
+                            pre = pre.replace("Subject", "**Subject**").replace("Object", "**Object**").replace("Opportunity", "**Opportunity**")
+                            self._results_area.append(self._indent_text(self._wrap_text(pre, 76), 2) + "\n\n")
+                        self._format_hexad_section("HEXAD" + parts[1])
+                    else:
+                        self._display_description_as_is(description)
+                except:
+                    self._display_description_as_is(description)
+            else:
+                self._display_description_as_is(description)
+
+            self._results_area.append(">>> REMEDIATION RECOMMENDATIONS <<<\n")
+            self._results_area.append("-" * 36 + "\n")
+            self._results_area.append(self._indent_text(self._wrap_text(recommendation, 76), 2) + "\n\n")
+
+            if notes and notes != "":
+                self._results_area.append(">>> ADDITIONAL NOTES <<<\n")
+                self._results_area.append("-" * 22 + "\n")
+                self._results_area.append(self._indent_text(self._wrap_text(notes, 76), 2) + "\n\n")
+
+            self._results_area.append("Assessment completed at: " + Date().toString() + "\n")
+            self._results_area.append("=" * 80 + "\n\n")
+        except Exception as e:
+            self._results_area.append("[-] Error parsing finding results: " + str(e) + "\n\n")
+
     def createMenuItems(self, invocation):
         """Create context menu items"""
         menu_items = []
-        
-        # Get selected text from request/response
+
+        # 1) Selected CVE text -> CVE analysis (existing behavior)
         selected_text = self._get_selected_text(invocation)
-        
         if selected_text and self._is_cve_format(selected_text):
             menu_item = JMenuItem("Analyze with Powertrain: " + selected_text)
             menu_item.addActionListener(CVEMenuActionListener(self, selected_text))
             menu_items.append(menu_item)
-        
+
+        # 2) Selected scan issues -> finding assessment (estimated CVSS)
+        try:
+            issues = invocation.getSelectedIssues()
+        except:
+            issues = None
+        if issues is not None and len(issues) > 0:
+            # one issue can have many instances (same name, many URLs); this extension
+            # assesses the finding TYPE, so collapse to one menu item per issue name.
+            seen = set()
+            for issue in issues:
+                iname = issue.getIssueName()
+                if iname in seen:
+                    continue
+                seen.add(iname)
+                item = JMenuItem("Assess with Tally (estimate CVSS): " + iname)
+                item.addActionListener(FindingMenuActionListener(self, issue))
+                menu_items.append(item)
+
         return menu_items if menu_items else None
     
     def _get_selected_text(self, invocation):
@@ -653,7 +889,7 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IContextMenuFactory, Acti
     
     # ITab implementation
     def getTabCaption(self):
-        return "Powertrain CVE"
+        return "Powertrain"
     
     def getUiComponent(self):
         return self._main_panel
@@ -673,6 +909,16 @@ class CVEMenuActionListener(ActionListener):
     
     def actionPerformed(self, event):
         self.extender.analyze_cve_from_context(self.cve_id)
+
+class FindingMenuActionListener(ActionListener):
+    """Action listener for context-menu finding assessment (Burp scan issues)."""
+
+    def __init__(self, extender, issue):
+        self.extender = extender
+        self.issue = issue
+
+    def actionPerformed(self, event):
+        self.extender._analyze_finding(self.issue)
 
 # Document change listener for auto-saving settings
 class SettingsChangeListener(DocumentListener):
