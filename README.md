@@ -1,4 +1,4 @@
-# Powertrain CVE Analyzer for Burp Suite
+# Powertrain Powertrain Analyzer for Burp Suite
 
 <p align="center">
   <img src="https://img.shields.io/badge/Burp%20Suite-Extension-orange" alt="Burp Suite Extension">
