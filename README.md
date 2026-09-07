@@ -19,6 +19,7 @@ A professional Burp Suite extension that integrates **Oxytis Powertrain vulnerab
 - **🛡️ HEXAD Security Primitives** - Comprehensive impact analysis across six security domains
 - **📋 OWASP Top 10 Mapping** - Automatic categorization to current OWASP standards
 - **🖱️ Context Menu Integration** - Right-click CVE IDs *or* Scanner issues anywhere in Burp to analyze
+- **🔒 Privacy by Default** - Finding evidence is sent as shape only (no hostname, bodies, cookies, or credential values), with a payload preview before anything leaves Burp
 - **📄 Professional Reports** - Clean, formatted output perfect for security assessments
 - **⚡ Background Processing** - Non-blocking API calls keep Burp responsive
 
@@ -50,14 +51,14 @@ A professional Burp Suite extension that integrates **Oxytis Powertrain vulnerab
 
 2. **Load in Burp Suite**
    - Open Burp Suite
-   - Navigate to **Extender** → **Extensions**
+   - Navigate to **Extensions** → **Installed**
    - Click **Add**
    - Select **Python** as the extension type
    - Choose `powertrain_burp_extension.py`
    - Click **Next** to load
 
 3. **Configure API Access**
-   - Go to the new **Powertrain CVE** tab
+   - Go to the new **Powertrain** tab
    - Enter your Oxytis API token
    - Click **Test API Connection** to verify
 
@@ -74,10 +75,32 @@ A professional Burp Suite extension that integrates **Oxytis Powertrain vulnerab
 - **Token**: Your provided API key
 - **Format**: JSON output
 
+## 🔒 Privacy & Data Handling
+
+Finding assessment needs evidence from the request/response to derive a CVSS vector, but not the *values* in it. The **Evidence sent** setting in the Powertrain tab controls what leaves Burp:
+
+| Mode | What is sent |
+|------|--------------|
+| **Redacted** (default) | Method, scheme, port, tokenized path (`/users/{n}`), parameter names and types, header names (values only for security-relevant headers such as `Content-Type`, `Server`, `Strict-Transport-Security`, `X-Frame-Options`, `Content-Security-Policy`), auth scheme without the credential, cookie names only, status code, MIME type, body sizes, and Scanner-highlighted snippets with values masked |
+| **Metadata-only** | As Redacted, without the highlighted snippets |
+| **Raw** | Unmodified first request/response (pre-1.4 behaviour). Opt-in; not appropriate for client systems without consent |
+
+In every mode:
+
+- The hostname is never sent; the `Host` header is replaced with `[host]`.
+- Request and response bodies are never sent in Redacted or Metadata-only mode; only their byte counts.
+- Issue detail is redacted in place — emails, IPv4 addresses, MAC addresses, serial numbers, UUIDs, JWTs, long hex and base64 strings, and the values of sensitive keys (`password`, `token`, `session`, `api_key`, …) are masked. Masking is shape-preserving where that matters for scoring: a 32-character hash becomes `[hex:32]`, so the model can still recognise an MD5 without seeing it.
+- Prior Tally output pasted into an issue (`CVSS v4.0:`, `OWASP Category:`, `CWE-…:` lines) is stripped before re-assessment so an old vector never anchors a new one.
+- **Preview payload before sending** (default on) shows the exact outbound JSON, token masked, with OK/Cancel.
+
+The setting and the preview toggle persist across Burp restarts and are reset by **Clear Saved Settings**. The `evidence_mode` field in each request records which mode produced a given assessment.
+
+Redaction was validated against five real findings from a hardware assessment (client-side-only authentication, unsalted MD5, unauthenticated CGI API, cleartext HTTP, frameable response): Redacted and Raw modes produced identical CVSS v4.0 vectors and OWASP categories in every case.
+
 ## 🎯 Usage
 
 ### Method 1: Direct CVE Analysis
-1. Navigate to the **Powertrain CVE** tab
+1. Navigate to the **Powertrain** tab
 2. Enter a CVE ID (e.g., `CVE-2024-1234`)
 3. Select output format
 4. Click **Analyze CVE**
@@ -86,13 +109,13 @@ A professional Burp Suite extension that integrates **Oxytis Powertrain vulnerab
 ### Method 2: Context Menu Analysis
 1. Select any CVE ID text in requests/responses
 2. Right-click and choose **Analyze with Powertrain**
-3. Analysis runs automatically in the CVE tab
+3. Analysis runs automatically in the Powertrain tab
 
 ### Method 3: No-CVE Finding Assessment
 For vulnerabilities discovered by Burp Scanner that have no published CVE:
 1. In the **Scanner** (or issue view), right-click a finding
-2. Choose **Assess with Powertrain**
-3. The extension extracts the issue name, detail, and evidence, maps the issue name to a CWE, and submits it for assessment
+2. Choose **Assess with Tally (estimate CVSS)**
+3. The extension extracts the issue name, detail, and evidence, redacts them according to the **Evidence sent** setting (see [Privacy & Data Handling](#-privacy--data-handling)), maps the issue name to a CWE, and shows you the payload for approval
 4. Use the **exposure** and **controls** dropdowns to reflect environmental context; the risk view updates accordingly
 5. Review the estimated CVSS v4.0 vector and score — clearly marked as an estimate (no published CVE)
 
@@ -176,13 +199,24 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 📞 Support
 
-- **Issues**: [GitHub Issues](https://github.com/yourusername/powertrain-burp-extension/issues)
-- **Documentation**: [Wiki](https://github.com/yourusername/powertrain-burp-extension/wiki)
+- **Issues**: [GitHub Issues](https://github.com/oxytis/powertrain-burp-extension/issues)
+- **Documentation**: [Wiki](https://github.com/oxytis/powertrain-burp-extension/wiki)
 - **API Support**: Contact Oxytis for API access and support
 
 ## 🔄 Changelog
 
-### v1.1.0 (2026-07-02)
+### v1.4 (2026-09-07)
+- **Finding evidence is now redacted by default.** The raw first request/response (2000 bytes each) and unredacted issue detail previously sent to `/api/finding/analyze` are replaced by a structured, shape-only view of the traffic — no hostname, bodies, cookie, or credential values leave Burp unless explicitly enabled
+- New **Evidence sent** setting: Redacted (default) / Metadata-only / Raw
+- Redactor masks emails, IPv4, MAC addresses, serial numbers, UUIDs, JWTs, long hex/base64 (shape-preserving, e.g. `[hex:32]`), and values of sensitive keys in issue detail and Scanner-highlighted snippets
+- Prior Tally output pasted into an issue (`CVSS v4.0:` / `OWASP Category:` / `CWE-…:` lines) is stripped before re-assessment
+- **Preview payload before sending** (default on): shows the exact outbound JSON with OK/Cancel
+- New `evidence_mode` field in the finding request payload
+- Settings persist across restarts and are cleared by **Clear Saved Settings**
+- Validated against five real findings with zero vector drift between Raw and Redacted
+- README: corrected Burp UI names (Extensions → Installed, Powertrain tab), context-menu label, and repository links
+
+### v1.3 (2026-07-02)
 - **Added no-CVE finding assessment mode** — right-click any Burp Scanner issue to get an estimated CVSS v4.0 score for findings without a published CVE, via the new `/api/finding/analyze` endpoint
 - Model-derived CVSS v4.0 vectors are now scored **deterministically** with FIRST's official `cvss` library, replacing a hand-rolled approximation that ignored subsequent-system impact (SC/SI/SA) and could produce significantly wrong scores — this also fixes scoring on the CVE path
 - Finding results are explicitly labeled as estimates (no published CVE, no EPSS)
