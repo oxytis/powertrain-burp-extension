@@ -205,6 +205,11 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 🔄 Changelog
 
+### v1.5 (2026-09-10)
+- Oxytis Risk relabelled in finding output as a contextual prioritization score (not a CVSS score), showing its inputs inline (exposure + control effectiveness).
+- Added DESIGN.md documenting the deliberate base/environmental scoring split: the CVSS base layer is deterministic and customer-independent; environmental factors (exposure, controls, PCI/HIPAA Security Requirements) are a per-implementation layer, never baked into the base.
+- No change to the CVSS base scoring engine or finding vectors.
+- 
 ### v1.4 (2026-09-07)
 - **Finding evidence is now redacted by default.** The raw first request/response (2000 bytes each) and unredacted issue detail previously sent to `/api/finding/analyze` are replaced by a structured, shape-only view of the traffic — no hostname, bodies, cookie, or credential values leave Burp unless explicitly enabled
 - New **Evidence sent** setting: Redacted (default) / Metadata-only / Raw
