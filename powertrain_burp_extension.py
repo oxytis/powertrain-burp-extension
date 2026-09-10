@@ -10,7 +10,7 @@ CVE lookup and AI-assisted assessment of Scanner findings without a CVE.
 from burp import IBurpExtender, ITab, IHttpListener, IContextMenuFactory
 from javax.swing import (JPanel, JLabel, JTextField, JButton, JTextArea, 
                         JScrollPane, BoxLayout, JMenuItem, JOptionPane,
-                        BorderFactory, SwingConstants, JComboBox)
+                        BorderFactory, SwingConstants, JComboBox, JCheckBox)
 from javax.swing.event import DocumentListener
 from java.awt import BorderLayout, FlowLayout, Dimension, Color, Font
 from java.awt.event import ActionListener
@@ -50,6 +50,29 @@ _ISSUE_CWE = [
     ("xml injection",                   "CWE-91"),
 ]
 
+# Finding-assessment privacy modes (what leaves Burp). "Raw" is the pre-1.1 behaviour.
+_PRIVACY_MODES = ["Redacted", "Metadata-only", "Raw"]
+
+# Response headers whose *values* are security-relevant and never carry client data.
+# Every other header is sent as name only.
+_HEADER_VALUE_ALLOW = set([
+    "content-type", "content-length", "server", "x-powered-by",
+    "strict-transport-security", "x-frame-options", "x-content-type-options",
+    "content-security-policy", "content-security-policy-report-only",
+    "referrer-policy", "permissions-policy", "cache-control", "pragma",
+    "access-control-allow-origin", "access-control-allow-credentials",
+    "x-xss-protection", "cross-origin-opener-policy", "cross-origin-resource-policy",
+])
+_SENSITIVE_KEY_NAMES = (r"pass(?:word|wd)?|pwd|secret|token|api[_-]?key|auth|session|sid|jsessionid|"
+                        r"phpsessid|csrf|xsrf|nonce|otp|ssn|email|user(?:name)?|login|account|card|cvv|iban")
+# key=value / key: value / "key":"value" -> keep the key, drop the value
+_SENSITIVE_KV = re.compile(r'(?i)(["\']?\b(?:' + _SENSITIVE_KEY_NAMES + r')\b["\']?\s*[:=]\s*["\']?)([^"\'&;\s,]+)')
+# Leading lines of a prior Tally/Powertrain assessment pasted into an issue; stripped before
+# re-assessment so the old vector never anchors the new one.
+_PRIOR_ASSESSMENT = re.compile(r"(?im)^(CVSS v4\.0:|OWASP Category:|CWE-\d+:).*$\n?")
+_MAX_SNIPPET = 300      # chars per Burp-highlighted evidence snippet
+_MAX_SNIPPETS = 4
+
 class BurpExtender(IBurpExtender, ITab, IHttpListener, IContextMenuFactory, ActionListener):
     
     def registerExtenderCallbacks(self, callbacks):
@@ -86,12 +109,19 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IContextMenuFactory, Acti
             # Load API Token
             saved_token = self._callbacks.loadExtensionSetting("api_token")
             self._saved_api_token = saved_token if saved_token else ""
+
+            # Privacy: what leaves Burp on a finding assessment
+            saved_priv = self._callbacks.loadExtensionSetting("privacy_mode")
+            self._saved_privacy_mode = saved_priv if saved_priv in _PRIVACY_MODES else "Redacted"
+            self._saved_preview = self._callbacks.loadExtensionSetting("preview_payload") != "0"
             
             print("[+] Settings loaded from Burp configuration")
         except Exception as e:
             print("[-] Error loading settings: " + str(e))
             self._saved_api_url = "https://oxytis.com/api/cve/analyze"
             self._saved_api_token = ""
+            self._saved_privacy_mode = "Redacted"
+            self._saved_preview = True
     
     def _save_settings(self):
         """Save current settings to Burp's extension settings"""
@@ -103,6 +133,11 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IContextMenuFactory, Acti
             # Save API Token
             api_token = self._api_token_field.getText()
             self._callbacks.saveExtensionSetting("api_token", api_token)
+
+            self._callbacks.saveExtensionSetting("privacy_mode",
+                str(self._privacy_combo.getSelectedItem()))
+            self._callbacks.saveExtensionSetting("preview_payload",
+                "1" if self._preview_check.isSelected() else "0")
             
             print("[+] Settings saved to Burp configuration")
         except Exception as e:
@@ -189,6 +224,24 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IContextMenuFactory, Acti
         self._controls_combo = JComboBox(["Partial", "Ineffective", "Effective"])
         finding_panel.add(self._controls_combo)
         config_panel.add(finding_panel)
+
+        # Privacy controls: what evidence is sent to the Powertrain API
+        privacy_panel = JPanel(FlowLayout(FlowLayout.LEFT))
+        privacy_panel.add(JLabel("Evidence sent:"))
+        self._privacy_combo = JComboBox(_PRIVACY_MODES)
+        self._privacy_combo.setSelectedItem(self._saved_privacy_mode)
+        self._privacy_combo.addActionListener(self)
+        privacy_panel.add(self._privacy_combo)
+        self._preview_check = JCheckBox("Preview payload before sending", self._saved_preview)
+        self._preview_check.addActionListener(self)
+        privacy_panel.add(self._preview_check)
+        config_panel.add(privacy_panel)
+        privacy_info = JPanel(FlowLayout(FlowLayout.LEFT))
+        privacy_label = JLabel("Redacted: request/response shape + Burp-highlighted snippets with values masked. "
+                               "Metadata-only: shape only, no snippets. Raw: unmodified (not for client data).")
+        privacy_label.setFont(Font("Arial", Font.ITALIC, 10))
+        privacy_info.add(privacy_label)
+        config_panel.add(privacy_info)
         
         # Test connection button
         test_panel = JPanel(FlowLayout(FlowLayout.LEFT))
@@ -238,16 +291,22 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IContextMenuFactory, Acti
             self._results_area.setText("")
         elif command == "Clear Saved Settings":
             self._clear_settings()
+        elif event.getSource() in (self._privacy_combo, self._preview_check):
+            self._save_settings()
     
     def _clear_settings(self):
         """Clear all saved settings"""
         try:
             self._callbacks.saveExtensionSetting("api_url", None)
             self._callbacks.saveExtensionSetting("api_token", None)
+            self._callbacks.saveExtensionSetting("privacy_mode", None)
+            self._callbacks.saveExtensionSetting("preview_payload", None)
             
             # Reset form fields
             self._api_url_field.setText("https://oxytis.com/api/cve/analyze")
             self._api_token_field.setText("")
+            self._privacy_combo.setSelectedItem("Redacted")
+            self._preview_check.setSelected(True)
             
             self._results_area.append("[+] Settings cleared successfully\n")
             JOptionPane.showMessageDialog(self._main_panel, 
@@ -661,7 +720,7 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IContextMenuFactory, Acti
         return text.strip()
 
     def _issue_evidence(self, issue):
-        """First request/response pair as text (truncated) to ground the model."""
+        """Raw first request/response pair (truncated). Used only in 'Raw' mode."""
         try:
             msgs = issue.getHttpMessages()
             if not msgs or len(msgs) == 0:
@@ -679,45 +738,204 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IContextMenuFactory, Acti
             print("[-] Error extracting evidence: " + str(e))
             return "(evidence extraction failed)"
 
+    # ---- privacy: redaction + structured evidence -------------------------------
+
+    def _redact(self, text, host=None):
+        """Mask identifying values but keep their *shape* (type + length) so the model
+        can still reason about e.g. a 32-hex hash or a JWT without seeing it."""
+        if not text:
+            return ""
+        t = text
+        if host:
+            t = re.sub(re.escape(host), "[host]", t, flags=re.I)
+        t = re.sub(r"eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}", "[jwt]", t)
+        t = re.sub(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", "[email]", t)
+        t = re.sub(r"\b(?:\d{1,3}\.){3}\d{1,3}\b", "[ipv4]", t)
+        t = re.sub(r"\b(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}\b", "[mac]", t)
+        t = re.sub(r"(?i)(serial(?:\s*(?:number|no\.?|#))?\s*[:=(]?\s*)([A-Za-z0-9][A-Za-z0-9-]{3,})",
+                   lambda m: m.group(1) + "[serial]", t)
+        t = re.sub(r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b", "[uuid]", t)
+        t = re.sub(r"\b[0-9a-fA-F]{32,}\b", lambda m: "[hex:%d]" % len(m.group(0)), t)
+        # base64: require at least one digit so camelCase identifiers (endpoint/function names) survive
+        t = re.sub(r"(?<![A-Za-z0-9+/=])(?=[A-Za-z0-9+/]*\d)[A-Za-z0-9+/]{24,}={0,2}(?![A-Za-z0-9+/=])",
+                   lambda m: "[b64:%d]" % len(m.group(0)), t)
+        t = _SENSITIVE_KV.sub(lambda m: m.group(1) + "[redacted]", t)
+        return t
+
+    def _shape_path(self, path):
+        """Tokenize path segments that look like identifiers."""
+        segs = []
+        for seg in path.split("/"):
+            if not seg:
+                segs.append(seg); continue
+            if re.match(r"^\d+$", seg):
+                segs.append("{n}")
+            elif re.match(r"^[0-9a-fA-F-]{16,}$", seg) or re.match(r"^(?=[A-Za-z0-9_-]*\d)[A-Za-z0-9_-]{20,}$", seg):
+                segs.append("{id}")
+            else:
+                segs.append(seg)
+        return "/".join(segs)
+
+    def _shape_headers(self, headers, is_request):
+        """Header names always; values only from the allow-list. Auth scheme kept, credential dropped."""
+        out = []
+        for h in headers[1:]:  # [0] is the request/status line
+            if ":" not in h:
+                continue
+            name, val = h.split(":", 1)
+            lname = name.strip().lower(); val = val.strip()
+            if lname in ("authorization", "proxy-authorization", "www-authenticate"):
+                out.append(name.strip() + ": " + (val.split(" ", 1)[0] if val else "") + " [redacted]")
+            elif lname == "cookie":
+                names = [c.split("=", 1)[0].strip() for c in val.split(";") if c.strip()]
+                out.append("Cookie: " + ", ".join(names) + " (names only)")
+            elif lname == "set-cookie":
+                parts = [p.strip() for p in val.split(";")]
+                cname = parts[0].split("=", 1)[0] if parts else ""
+                flags = [p.split("=", 1)[0] for p in parts[1:]]
+                out.append("Set-Cookie: " + cname + "=[redacted]; " + "; ".join(flags))
+            elif lname in _HEADER_VALUE_ALLOW:
+                out.append(name.strip() + ": " + val)
+            elif lname == "host":
+                out.append("Host: [host]")
+            else:
+                out.append(name.strip() + ": [omitted]")
+        return out
+
+    def _markers(self, m, which):
+        """Burp-highlighted byte ranges (what the Scanner actually flagged)."""
+        try:
+            fn = m.getRequestMarkers if which == "req" else m.getResponseMarkers
+            ranges = fn()
+            return list(ranges) if ranges else []
+        except Exception:
+            return []
+
+    def _structured_evidence(self, issue, mode):
+        """Shape-only view of the first request/response, plus (Redacted mode) the
+        Scanner-highlighted snippets with values masked. No bodies, no host, no cookies."""
+        try:
+            msgs = issue.getHttpMessages()
+            if not msgs or len(msgs) == 0:
+                return "(no request/response captured)"
+            m = msgs[0]
+            svc = m.getHttpService()
+            host = svc.getHost() if svc else None
+            lines = []
+
+            req = m.getRequest()
+            if req:
+                ri = self._helpers.analyzeRequest(m)
+                url = ri.getUrl()
+                lines.append("=== REQUEST (shape) ===")
+                lines.append("%s %s://[host]:%s%s" % (ri.getMethod(), url.getProtocol(),
+                             url.getPort(), self._shape_path(url.getPath() or "/")))
+                params = []
+                for p in ri.getParameters():
+                    ptype = {0: "url", 1: "body", 2: "cookie", 6: "json", 3: "xml", 5: "multipart"}.get(p.getType(), "other")
+                    params.append("%s(%s)" % (p.getName(), ptype))
+                if params:
+                    lines.append("Params: " + ", ".join(params))
+                lines.extend(self._shape_headers(ri.getHeaders(), True))
+                body_len = len(req) - ri.getBodyOffset()
+                lines.append("Body: %d bytes [omitted]" % max(body_len, 0))
+                if mode == "Redacted":
+                    rs = self._helpers.bytesToString(req)
+                    for rng in self._markers(m, "req")[:_MAX_SNIPPETS]:
+                        snip = rs[rng[0]:rng[1]][:_MAX_SNIPPET]
+                        lines.append("Flagged: " + self._redact(snip, host))
+
+            resp = m.getResponse()
+            if resp:
+                rsi = self._helpers.analyzeResponse(resp)
+                lines.append("")
+                lines.append("=== RESPONSE (shape) ===")
+                lines.append("Status: %d  MIME: %s/%s  Body: %d bytes [omitted]" % (
+                    rsi.getStatusCode(), rsi.getStatedMimeType(), rsi.getInferredMimeType(),
+                    max(len(resp) - rsi.getBodyOffset(), 0)))
+                lines.extend(self._shape_headers(rsi.getHeaders(), False))
+                if mode == "Redacted":
+                    rs = self._helpers.bytesToString(resp)
+                    for rng in self._markers(m, "resp")[:_MAX_SNIPPETS]:
+                        snip = rs[rng[0]:rng[1]][:_MAX_SNIPPET]
+                        lines.append("Flagged: " + self._redact(snip, host))
+
+            return "\n".join(lines) if lines else "(no request/response captured)"
+        except Exception as e:
+            print("[-] Error building structured evidence: " + str(e))
+            return "(evidence extraction failed)"
+
+    def _build_finding_payload(self, issue, api_token):
+        """Assemble the exact JSON sent to /api/finding/analyze for the selected privacy mode."""
+        mode = str(self._privacy_combo.getSelectedItem())
+        name = issue.getIssueName()
+        cwe = self._cwe_for_issue(name)
+        detail = self._strip_html(issue.getIssueDetail() or "")
+        background = self._strip_html(issue.getIssueBackground() or "")
+        if background:
+            detail = (detail + "\n\n" + background).strip()
+        detail = _PRIOR_ASSESSMENT.sub("", detail).strip()
+        if mode == "Raw":
+            evidence = self._issue_evidence(issue)
+        else:
+            try:
+                host = issue.getHttpService().getHost()
+            except Exception:
+                host = None
+            detail = self._redact(detail, host)
+            evidence = self._structured_evidence(issue, mode)
+        return {
+            "token": api_token,
+            "name": name,
+            "cwe": cwe,
+            "detail": detail,
+            "evidence": evidence,
+            "evidence_mode": mode.lower(),
+            "exposure": str(self._exposure_combo.getSelectedItem()).lower(),
+            "controls": str(self._controls_combo.getSelectedItem()).lower(),
+        }
+
+    def _confirm_payload(self, data):
+        """Show the outbound payload (token masked) and let the tester cancel."""
+        shown = dict(data); shown["token"] = "[configured]"
+        area = JTextArea(json.dumps(shown, indent=2), 30, 90)
+        area.setEditable(False)
+        area.setFont(Font("Monospaced", Font.PLAIN, 11))
+        choice = JOptionPane.showConfirmDialog(self._main_panel, JScrollPane(area),
+            "Powertrain: this is what will be sent", JOptionPane.OK_CANCEL_OPTION,
+            JOptionPane.PLAIN_MESSAGE)
+        return choice == JOptionPane.OK_OPTION
+
     def _analyze_finding(self, issue):
         """Assess a Burp scan issue (no CVE) via the Powertrain finding endpoint."""
+        api_url = self._api_url_field.getText()
+        api_token = self._api_token_field.getText()
+        finding_url = api_url.replace("/cve/", "/finding/")
+
+        if not api_token:
+            JOptionPane.showMessageDialog(self._main_panel,
+                "Please enter an API token", "Missing Token",
+                JOptionPane.WARNING_MESSAGE)
+            return
+
+        # Payload is built (and optionally previewed) on the calling thread so the
+        # tester sees exactly what leaves Burp before anything is sent.
+        data = self._build_finding_payload(issue, api_token)
+        if self._preview_check.isSelected() and not self._confirm_payload(data):
+            self._results_area.append("[*] Assessment cancelled by user\n")
+            return
+        name = data["name"]; cwe = data["cwe"]
+        json_data = json.dumps(data)
+
         def analyze():
             try:
-                api_url = self._api_url_field.getText()
-                api_token = self._api_token_field.getText()
-                finding_url = api_url.replace("/cve/", "/finding/")
-
-                if not api_token:
-                    JOptionPane.showMessageDialog(self._main_panel,
-                        "Please enter an API token", "Missing Token",
-                        JOptionPane.WARNING_MESSAGE)
-                    return
-
-                name = issue.getIssueName()
-                cwe = self._cwe_for_issue(name)
-                detail = self._strip_html(issue.getIssueDetail() or "")
-                background = self._strip_html(issue.getIssueBackground() or "")
-                if background:
-                    detail = (detail + "\n\n" + background).strip()
-                evidence = self._issue_evidence(issue)
-
-                data = {
-                    "token": api_token,
-                    "name": name,
-                    "cwe": cwe,
-                    "detail": detail,
-                    "evidence": evidence,
-                    "exposure": str(self._exposure_combo.getSelectedItem()).lower(),
-                    "controls": str(self._controls_combo.getSelectedItem()).lower(),
-                }
-                json_data = json.dumps(data)
-
                 request = urllib2.Request(finding_url)
                 request.add_header("Content-Type", "application/json")
                 request.get_method = lambda: "POST"
 
                 self._results_area.append("[*] Assessing finding: " + name +
-                                          (" (" + cwe + ")" if cwe else "") + " ...\n")
+                                          (" (" + cwe + ")" if cwe else "") +
+                                          " [evidence: " + data["evidence_mode"] + "] ...\n")
                 response = urllib2.urlopen(request, json_data, timeout=60)
                 result = response.read()
                 self._display_finding_results(name, result)
@@ -772,8 +990,23 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IContextMenuFactory, Acti
             else:
                 self._results_area.append("  CVSS (est. v4.0):  " + str(cvss_score) + " (" + severity + ")\n")
             self._results_area.append("  CVSS Vector:       " + cvss_vector + "\n")
-            self._results_area.append("  Oxytis Risk Score: " + str(fd.get("oxytis_risk_score", "N/A")) + "\n")
-            self._results_area.append("  OWASP Category:    " + label + "\n\n")
+            # Oxytis Risk is a contextual prioritization adjustment to the CVSS base
+            # (exposure + control effectiveness), not a CVSS score. Show its inputs.
+            risk = fd.get("oxytis_risk_score", "N/A")
+            expo = str(self._exposure_combo.getSelectedItem()).lower()
+            ctrl = str(self._controls_combo.getSelectedItem()).lower()
+            self._results_area.append("  Oxytis Risk (prioritization, not CVSS): " + str(risk) +
+                "  [CVSS base adjusted for " + ctrl + " controls, " + expo + " exposure]\n")
+            self._results_area.append("  OWASP Category:    " + label + "\n")
+            # Subsequent-system audit trail (server enforces S*=N when no distinct system is named)
+            subsequent = fd.get("subsequent_system")
+            self._results_area.append("  Subsequent System: " +
+                (self._clean_text(subsequent) if subsequent else "none named") + "\n")
+            if fd.get("subsequent_impact_zeroed"):
+                self._results_area.append("  NOTE: model judged " +
+                    self._clean_text(fd.get("cvss_vector_model", "?")) +
+                    " but S* zeroed (no subsequent system named)\n")
+            self._results_area.append("\n")
 
             self._results_area.append(">>> TECHNICAL ANALYSIS <<<\n")
             self._results_area.append("-" * 28 + "\n")
